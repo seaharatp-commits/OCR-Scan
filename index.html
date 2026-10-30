@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f6f1" />
+    <meta name="description" content="อ่านข้อความจากภาพและ PDF ด้วย OCRScan" />
+    <title>OCRScan — อ่านข้อความจากเอกสาร</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%231d3a30'/%3E%3Cpath d='M11 13h18M11 20h12M11 27h18' stroke='%23d7f377' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js"></script>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <a class="brand" href="#top" aria-label="OCRScan หน้าหลัก">
+          <span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M6 9h20M6 16h13M6 23h20" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><path d="M23 13v6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg></span>
+          <span>OCR<span class="brand-light">Scan</span></span>
+        </a>
+        <div class="privacy-pill"><span></span> ไฟล์อยู่ในเครื่องคุณ</div>
+      </header>
+
+      <main id="top">
+        <section class="intro">
+          <div class="eyebrow"><span></span> แปลงเอกสารเป็นข้อความ</div>
+          <h1>อ่านข้อความจาก<br class="mobile-only" /> รูปภาพและ PDF</h1>
+          <p>เลือกรูปหรือเอกสาร แล้ว OCRScan จะช่วยอ่านข้อความให้<br class="desktop-only" /> คัดลอกหรือบันทึกผลลัพธ์ได้ทันที</p>
+        </section>
+
+        <section class="scanner-card" aria-label="สแกนเอกสาร">
+          <label id="drop-zone" class="drop-zone" for="file-input" tabindex="0">
+            <input id="file-input" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.gif,application/pdf,image/png,image/jpeg,image/webp,image/bmp,image/gif" multiple />
+            <span class="upload-icon" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none"><path d="M24 31V10m0 0-7.5 7.5M24 10l7.5 7.5" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 27v9a3 3 0 0 0 3 3h20a3 3 0 0 0 3-3v-9" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><path d="M8 9h5m22 0h5M8 39h5m22 0h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity=".45"/></svg></span>
+            <strong>วางไฟล์ที่นี่</strong>
+            <span class="drop-sub">หรือต้องการ <span class="choose-link">เลือกไฟล์จากเครื่อง</span></span>
+            <span class="file-types"><span>PDF</span><span>JPG</span><span>PNG</span><span>WEBP</span><span>BMP</span><span>GIF</span><small>ไม่เกิน 40 MB / ไฟล์</small></span>
+          </label>
+
+          <div id="attachment-area" class="attachment-area" hidden>
+            <div class="attachment-heading"><strong>ไฟล์ที่เลือก</strong><span id="file-count">0 ไฟล์</span></div>
+            <div id="attachment-list" class="attachment-list"></div>
+          </div>
+
+          <div class="controls">
+            <div class="language-control">
+              <label for="language-select">ภาษาในเอกสาร</label>
+              <div class="select-wrap"><span class="language-symbol" aria-hidden="true">文</span><select id="language-select"><option value="tha+eng" selected>ไทย + English</option><option value="tha">ไทย</option><option value="eng">English</option></select><span class="chevron" aria-hidden="true">⌄</span></div>
+            </div>
+            <button id="scan-button" class="scan-button" type="button" disabled><span class="scan-button-icon" aria-hidden="true">✳</span><span>อ่านข้อความ</span><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3.5 10h12m0 0-4.5-4.5M15.5 10 11 14.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          </div>
+
+          <div id="progress-area" class="progress-area" hidden>
+            <div class="progress-copy"><strong id="progress-title">กำลังเตรียม OCR…</strong><span id="progress-detail">โปรดรอสักครู่</span></div>
+            <div class="progress-track"><span id="progress-fill"></span></div>
+          </div>
+
+          <section id="result-area" class="result-area" hidden aria-labelledby="result-title">
+            <div class="result-heading"><div><span class="result-kicker">ข้อความที่อ่านได้</span><h2 id="result-title">ผลลัพธ์ OCR</h2></div><button id="clear-button" class="clear-button" type="button">เริ่มใหม่</button></div>
+            <textarea id="result-text" placeholder="ผลลัพธ์จะปรากฏที่นี่ คุณสามารถแก้ไขข้อความได้"></textarea>
+            <div class="result-actions"><span class="edit-note">ตรวจและแก้ไขข้อความก่อนนำไปใช้ได้</span><div class="button-group"><button id="copy-button" class="secondary-button" type="button" disabled><span aria-hidden="true">▣</span> คัดลอก</button><button id="download-button" class="download-button" type="button" disabled><span aria-hidden="true">↓</span> ดาวน์โหลด .txt</button></div></div>
+          </section>
+        </section>
+
+        <div class="privacy-note"><span aria-hidden="true">♧</span><span><strong>เป็นส่วนตัว</strong> — ไฟล์ถูกประมวลผลในเบราว์เซอร์ ไม่ได้อัปโหลดไปยังเซิร์ฟเวอร์ · ลายมือหรือภาพไม่ชัดควรตรวจทานผลลัพธ์</span></div>
+
+        <section class="how-to" aria-label="วิธีใช้งาน">
+          <div class="how-heading"><span class="how-sparkle" aria-hidden="true">✳</span><div><strong>ใช้งานง่ายใน 3 ขั้นตอน</strong><small>ไม่ต้องติดตั้งโปรแกรม OCR เพิ่ม</small></div></div>
+          <div class="steps"><div><span>1</span> เลือกภาพหรือ PDF</div><i></i><div><span>2</span> กดอ่านข้อความ</div><i></i><div><span>3</span> คัดลอกหรือดาวน์โหลด</div></div>
+        </section>
+      </main>
+
+      <footer><span class="footer-brand">OCRScan</span><span>รองรับรูปภาพและเอกสาร PDF</span></footer>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
