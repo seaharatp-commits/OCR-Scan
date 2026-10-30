@@ -123,8 +123,14 @@ function delay(ms) {
 }
 
 async function getOcrEngine() {
-  const localStatus = await fetch('/api/easyocr/status', { cache: 'no-store' });
-  const setup = await localStatus.json();
+  let setup;
+  try {
+    const localStatus = await fetch('/api/easyocr/status', { cache: 'no-store' });
+    if (!localStatus.ok || !localStatus.headers.get('content-type')?.includes('application/json')) return 'tesseract';
+    setup = await localStatus.json();
+  } catch {
+    return 'tesseract';
+  }
   if (!setup.available) return 'tesseract';
 
   let backendFound = false;

@@ -12,10 +12,11 @@ if errorlevel 1 (
 
 py -3.11 --version >nul 2>nul
 if errorlevel 1 (
-  echo Python 3.11 was not found. Install Python 3.11, then run this file again.
-  start "" "https://www.python.org/downloads/windows/"
-  pause
-  exit /b 1
+  echo Python 3.11 was not found. Installing it with Python Install Manager...
+  py install 3.11
+  if errorlevel 1 goto python_failed
+  py -3.11 --version >nul 2>nul
+  if errorlevel 1 goto python_failed
 )
 
 if not exist ".venv\Scripts\python.exe" (
@@ -40,5 +41,13 @@ exit /b 0
 :failed
 echo.
 echo Setup did not finish. Check the error above and run this file again.
+pause
+exit /b 1
+
+:python_failed
+echo.
+echo Python 3.11 could not be installed automatically.
+echo Check your internet connection, then run "py install 3.11" in Command Prompt.
+echo After that finishes, run this file again.
 pause
 exit /b 1
