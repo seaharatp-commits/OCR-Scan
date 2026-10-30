@@ -2,12 +2,12 @@ import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.4.299/build
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.4.299/build/pdf.worker.mjs';
 
+const EASY_OCR_URL = 'http://127.0.0.1:4174';
 const fileInput = document.querySelector('#file-input');
 const dropZone = document.querySelector('#drop-zone');
 const attachmentArea = document.querySelector('#attachment-area');
 const attachmentList = document.querySelector('#attachment-list');
 const fileCount = document.querySelector('#file-count');
-const languageSelect = document.querySelector('#language-select');
 const scanButton = document.querySelector('#scan-button');
 const progressArea = document.querySelector('#progress-area');
 const progressTitle = document.querySelector('#progress-title');
@@ -43,7 +43,7 @@ function showToast(message) {
   toast.textContent = message;
   toast.classList.add('visible');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove('visible'), 2800);
+  toastTimer = setTimeout(() => toast.classList.remove('visible'), 3200);
 }
 
 function drawAttachments() {
@@ -52,7 +52,6 @@ function drawAttachments() {
   scanButton.disabled = busy || files.length === 0;
   clearButton.disabled = busy;
   fileInput.disabled = busy;
-  languageSelect.disabled = busy;
   attachmentList.replaceChildren();
 
   files.forEach((entry, index) => {
@@ -119,10 +118,75 @@ function setProgress(percent, title, detail) {
   progressDetail.textContent = detail;
 }
 
-function languageList() {
-  if (languageSelect.value === 'tha') return ['tha'];
-  if (languageSelect.value === 'eng') return ['eng'];
-  return ['tha', 'eng'];
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function getOcrEngine() {
+  const localStatus = await fetch('/api/easyocr/status', { cache: 'no-store' });
+  const setup = await localStatus.json();
+  if (!setup.available) return 'tesseract';
+
+  let backendFound = false;
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    try {
+      const response = await fetch(`${EASY_OCR_URL}/health`, { cache: 'no-store' });
+      if (response.ok) {
+        backendFound = true;
+        const health = await response.json();
+        if (health.ready) return 'easyocr';
+        if (health.error) {
+          showToast('EasyOCR เปิดไม่สำเร็จ ใช้ OCR ในเบราว์เซอร์แทน');
+          return 'tesseract';
+        }
+        setProgress(2, 'กำลังเตรียม EasyOCR', 'กำลังโหลดโมเดลไทยและอังกฤษครั้งแรก');
+        await delay(1000);
+        continue;
+      }
+    } catch {
+      // The local Python service may need a moment to start.
+    }
+    await delay(500);
+  }
+
+  if (!backendFound) return 'tesseract';
+  setProgress(2, 'กำลังเตรียม EasyOCR', 'โหลดโมเดลครั้งแรกอาจใช้เวลาหลายนาที');
+  for (let attempt = 0; attempt < 900; attempt += 1) {
+    try {
+      const response = await fetch(`${EASY_OCR_URL}/health`, { cache: 'no-store' });
+      const health = await response.json();
+      if (health.ready) return 'easyocr';
+      if (health.error) {
+        showToast('EasyOCR เปิดไม่สำเร็จ ใช้ OCR ในเบราว์เซอร์แทน');
+        return 'tesseract';
+      }
+      setProgress(2, 'กำลังเตรียม EasyOCR', 'กำลังโหลดโมเดลสำเร็จรูปครั้งแรก');
+    } catch {
+      showToast('ติดต่อ EasyOCR ไม่ได้ ใช้ OCR ในเบราว์เซอร์แทน');
+      return 'tesseract';
+    }
+    await delay(1000);
+  }
+  showToast('EasyOCR ใช้เวลาเตรียมนาน ใช้ OCR ในเบราว์เซอร์แทน');
+  return 'tesseract';
+}
+
+async function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('แปลงภาพเพื่อ OCR ไม่สำเร็จ')), 'image/png');
+  });
+}
+
+async function recognizeWithEasyOcr(canvas) {
+  const blob = await canvasToBlob(canvas);
+  const response = await fetch(`${EASY_OCR_URL}/ocr`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: blob,
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'EasyOCR อ่านภาพไม่สำเร็จ');
+  return result.text || '';
 }
 
 async function imageCanvas(file) {
@@ -151,43 +215,45 @@ async function pdfCanvas(pdf, pageNumber) {
 
 async function scanDocuments() {
   if (busy || !files.length) return;
-  if (!window.Tesseract?.createWorker) {
-    showToast('โหลดระบบ OCR ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วรีเฟรชหน้า');
-    return;
-  }
-
   busy = true;
   drawAttachments();
   resultArea.hidden = false;
   resultText.value = '';
   copyButton.disabled = true;
   downloadButton.disabled = true;
-  setProgress(1, 'กำลังเตรียมระบบอ่านข้อความ', 'การสแกนครั้งแรกอาจใช้เวลาสักครู่');
+  setProgress(1, 'กำลังตรวจสอบ OCR', 'โปรดรอสักครู่');
 
+  let worker;
+  let engine = 'tesseract';
+  const output = [];
   let activeFileIndex = 0;
   let currentPage = 0;
   let pageCount = 1;
-  let worker;
-  const output = [];
 
   try {
-    worker = await window.Tesseract.createWorker(languageList(), 1, {
-      logger: message => {
-        if (message.status === 'loading language traineddata') {
-          setProgress(2, 'กำลังเตรียมข้อมูลภาษา', 'ทำครั้งแรกครั้งเดียว แล้วเบราว์เซอร์จะจดจำไว้');
-          return;
-        }
-        if (message.status === 'recognizing text' && Number.isFinite(message.progress)) {
-          const part = (currentPage + message.progress) / Math.max(pageCount, 1);
-          const overall = ((activeFileIndex + part) / files.length) * 100;
-          setProgress(overall, 'กำลังอ่านข้อความ…', `ไฟล์ ${activeFileIndex + 1} จาก ${files.length}${pageCount > 1 ? ` · หน้า ${currentPage + 1} จาก ${pageCount}` : ''}`);
-        }
-      },
-    });
+    engine = await getOcrEngine();
+    if (engine === 'tesseract') {
+      if (!window.Tesseract?.createWorker) throw new Error('โหลด OCR ไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วรีเฟรชหน้า');
+      showToast('กำลังใช้ OCR ในเบราว์เซอร์ หากต้องการ EasyOCR ให้รัน ติดตั้ง-EasyOCR.bat ก่อน');
+      worker = await window.Tesseract.createWorker(['tha', 'eng'], 1, {
+        logger: message => {
+          if (message.status === 'recognizing text' && Number.isFinite(message.progress)) {
+            const part = (currentPage + message.progress) / Math.max(pageCount, 1);
+            const overall = ((activeFileIndex + part) / files.length) * 100;
+            setProgress(overall, 'กำลังอ่านข้อความ…', `ไฟล์ ${activeFileIndex + 1} จาก ${files.length}${pageCount > 1 ? ` · หน้า ${currentPage + 1} จาก ${pageCount}` : ''}`);
+          }
+        },
+      });
+    }
 
     for (activeFileIndex = 0; activeFileIndex < files.length; activeFileIndex += 1) {
       const file = files[activeFileIndex].file;
       const fileLabel = `ไฟล์ ${activeFileIndex + 1} จาก ${files.length}: ${file.name}`;
+      const recognize = async canvas => {
+        if (engine === 'easyocr') return recognizeWithEasyOcr(canvas);
+        const result = await worker.recognize(canvas);
+        return result.data.text.trim();
+      };
       let text = '';
 
       if (isPdf(file)) {
@@ -195,10 +261,10 @@ async function scanDocuments() {
         pageCount = pdf.numPages;
         const pages = [];
         for (currentPage = 0; currentPage < pageCount; currentPage += 1) {
-          setProgress(((activeFileIndex + currentPage / pageCount) / files.length) * 100, 'กำลังอ่านข้อความ…', `${fileLabel} · หน้า ${currentPage + 1} จาก ${pageCount}`);
+          setProgress(((activeFileIndex + currentPage / pageCount) / files.length) * 100, `กำลังอ่านข้อความด้วย ${engine === 'easyocr' ? 'EasyOCR' : 'OCR ในเบราว์เซอร์'}`, `${fileLabel} · หน้า ${currentPage + 1} จาก ${pageCount}`);
           const canvas = await pdfCanvas(pdf, currentPage + 1);
-          const result = await worker.recognize(canvas);
-          pages.push(`หน้า ${currentPage + 1}\n${result.data.text.trim()}`);
+          const pageText = await recognize(canvas);
+          pages.push(`หน้า ${currentPage + 1}\n${pageText}`);
           canvas.width = 0;
           canvas.height = 0;
           text = pages.join('\n\n');
@@ -208,10 +274,9 @@ async function scanDocuments() {
       } else {
         currentPage = 0;
         pageCount = 1;
-        setProgress((activeFileIndex / files.length) * 100, 'กำลังอ่านข้อความ…', fileLabel);
+        setProgress((activeFileIndex / files.length) * 100, `กำลังอ่านข้อความด้วย ${engine === 'easyocr' ? 'EasyOCR' : 'OCR ในเบราว์เซอร์'}`, fileLabel);
         const canvas = await imageCanvas(file);
-        const result = await worker.recognize(canvas);
-        text = result.data.text.trim();
+        text = await recognize(canvas);
         canvas.width = 0;
         canvas.height = 0;
       }
@@ -221,12 +286,12 @@ async function scanDocuments() {
       resultText.scrollTop = resultText.scrollHeight;
       copyButton.disabled = !resultText.value.trim();
       downloadButton.disabled = !resultText.value.trim();
-      setProgress(((activeFileIndex + 1) / files.length) * 100, 'เสร็จแล้ว', `อ่านครบ ${activeFileIndex + 1} จาก ${files.length} ไฟล์`);
+      setProgress(((activeFileIndex + 1) / files.length) * 100, 'เสร็จแล้ว', `อ่านข้อความครบ ${activeFileIndex + 1} จาก ${files.length} ไฟล์`);
     }
-    showToast('อ่านข้อความเสร็จแล้ว ตรวจทานก่อนนำไปใช้ได้เลย');
+    showToast(`อ่านข้อความเสร็จแล้วด้วย ${engine === 'easyocr' ? 'EasyOCR' : 'OCR ในเบราว์เซอร์'}`);
   } catch (error) {
     console.error(error);
-    showToast('อ่านไฟล์ไม่สำเร็จ ลองใช้ภาพที่ชัดขึ้นหรือตรวจสอบอินเทอร์เน็ต');
+    showToast('อ่านไฟล์ไม่สำเร็จ ลองใช้ภาพที่ชัดขึ้นหรือตรวจสอบการติดตั้ง OCR');
     progressTitle.textContent = 'สแกนไม่สำเร็จ';
     progressDetail.textContent = error instanceof Error ? error.message : 'เกิดข้อผิดพลาด';
   } finally {
